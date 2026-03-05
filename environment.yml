@@ -1,0 +1,17 @@
+name: ooo-python
+channels:
+  - conda-forge
+dependencies:
+  - python
+  - armadillo
+  - cmake >=3.17
+  - ninja
+  - cxx-compiler
+  - nanobind>=2.0
+  - numpy
+  - pyscf >=2.4
+  - pytest
+  - pytest-cov
+  - pip
+  - scipy
+  - scikit-build-core>=0.9

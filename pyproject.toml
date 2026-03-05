@@ -1,0 +1,20 @@
+[build-system]
+requires = ["scikit-build-core>=0.9", "nanobind>=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "openorbitaloptimizer-pyscf"
+version = "0.1.0"
+description = "Python bindings for OpenOrbitalOptimizer SCF library"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy"]
+
+[project.optional-dependencies]
+pyscf = ["pyscf>=2.4"]
+test = ["pytest", "pyscf>=2.4"]
+
+[tool.scikit-build]
+wheel.packages = ["src/openorbitaloptimizer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

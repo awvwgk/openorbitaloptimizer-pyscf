@@ -1,0 +1,3 @@
+"""
+Conftest for OpenOrbitalOptimizer tests.
+"""
