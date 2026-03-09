@@ -14,8 +14,23 @@ from openorbitaloptimizer import run_ooo_scf
 
 from ._molecules import get_mole
 
-CLOSED_SHELL_TESTS = ["H2O,sto-3g", "N2,cc-pvdz", "C2H4,6-31g*", "H3+,def2-tzvp"]
-OPEN_SHELL_TESTS = ["C2H,def2-svp"]
+CLOSED_SHELL_TESTS = [
+    "H2O,sto-3g",
+    "N2,cc-pvdz",
+    "C2H4,6-31g*",
+    "H3+,def2-tzvp",
+    "CH3Li3,sto-3g",
+    "CH3Li3,def2-svp",
+    "Li2,sto-3g",
+    "Li2,cc-pvdz",
+]
+OPEN_SHELL_TESTS = [
+    "C2H,def2-svp",
+    "F2H,sto-3g",
+    "F2H,def2-svp",
+    "CHO,sto-3g",
+    "CHO,cc-pvdz",
+]
 
 
 class TestRHF:
@@ -115,3 +130,67 @@ class TestSCFState:
         assert len(state.e_tot_per_cycle) >= 2
         assert state.wall_time is not None and state.wall_time > 0
         assert state.nfock > 0
+
+    @pytest.mark.parametrize("name", CLOSED_SHELL_TESTS[:1])
+    def test_homo_lumo_gap_per_cycle(self, name):
+        """HOMO-LUMO gap is recorded for every SCF cycle (restricted)."""
+        mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
+        mf = scf.RHF(mol)
+        _, state = run_ooo_scf(mf)
+
+        ncycles = len(state.cycles)
+        assert ncycles >= 2
+
+        # One gap entry per cycle
+        assert len(state.homo_lumo_gap_up_per_cycle) == ncycles
+        assert len(state.homo_lumo_gap_down_per_cycle) == ncycles
+
+        # All entries are finite positive floats (closed-shell should have a gap)
+        for gap in state.homo_lumo_gap_up_per_cycle:
+            assert gap is not None
+            assert gap > 0.0
+        for gap in state.homo_lumo_gap_down_per_cycle:
+            assert gap is not None
+            assert gap > 0.0
+
+    @pytest.mark.parametrize("name", OPEN_SHELL_TESTS[:1])
+    def test_homo_lumo_gap_per_cycle_unrestricted(self, name):
+        """HOMO-LUMO gap is recorded for every SCF cycle (unrestricted)."""
+        mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
+        mf = scf.UHF(mol)
+        _, state = run_ooo_scf(mf)
+
+        ncycles = len(state.cycles)
+        assert ncycles >= 2
+
+        assert len(state.homo_lumo_gap_up_per_cycle) == ncycles
+        assert len(state.homo_lumo_gap_down_per_cycle) == ncycles
+
+        # At least the last entry should be a finite positive float
+        assert state.homo_lumo_gap_up_per_cycle[-1] is not None
+        assert state.homo_lumo_gap_up_per_cycle[-1] > 0.0
+        assert state.homo_lumo_gap_down_per_cycle[-1] is not None
+        assert state.homo_lumo_gap_down_per_cycle[-1] > 0.0
+
+    @pytest.mark.parametrize("name", CLOSED_SHELL_TESTS[:1])
+    def test_dm_change_per_cycle(self, name):
+        """Density-matrix change is recorded for every SCF cycle."""
+        mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
+        mf = scf.RHF(mol)
+        _, state = run_ooo_scf(mf)
+
+        ncycles = len(state.cycles)
+        assert ncycles >= 2
+
+        # One dm_change entry per cycle
+        assert len(state.dm_change_per_cycle) == ncycles
+
+        # First entry may be None (no previous DM), rest must be non-negative
+        for dm_change in state.dm_change_per_cycle:
+            if dm_change is not None:
+                assert dm_change >= 0.0
+
+        # Converged SCF should show decreasing dm_change towards the end
+        non_none = [v for v in state.dm_change_per_cycle if v is not None]
+        assert len(non_none) >= 1
+        assert non_none[-1] < non_none[0]

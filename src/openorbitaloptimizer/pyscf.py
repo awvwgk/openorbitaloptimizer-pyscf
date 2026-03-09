@@ -91,12 +91,18 @@ class SCFState:
     nfock: int = 0
 
 
-def _make_fock_builder(mf: Any, X: NDArray, unrestricted: bool) -> Callable:
+def _make_fock_builder(
+    mf: Any, X: NDArray, unrestricted: bool, iter_data: dict[str, float | None]
+) -> Callable:
     """Return a Python callable matching the OOO FockBuilder signature.
 
     The closure captures *mf* and *X* and converts between orthonormal
-    and AO representations on every call.
+    and AO representations on every call.  It also populates *iter_data*
+    with the density-matrix change and HOMO-LUMO gap(s) for each call so
+    that the iteration callback can record them.
     """
+
+    _prev_dm: list[NDArray | None] = [None]
 
     def _builder(
         orbitals: list[NDArray], occupations: list[NDArray]
@@ -112,7 +118,6 @@ def _make_fock_builder(mf: Any, X: NDArray, unrestricted: bool) -> Callable:
             fock_ao = [hcore + vhf[0], hcore + vhf[1]]
             energy = mf.energy_tot(dm=dm, h1e=hcore, vhf=vhf)
             fock_ortho = [_to_ortho(f, X) for f in fock_ao]
-            return (float(energy), fock_ortho)
         else:
             C_ao = X @ orbitals[0]
             D = C_ao @ np.diag(occupations[0]) @ C_ao.T
@@ -122,7 +127,36 @@ def _make_fock_builder(mf: Any, X: NDArray, unrestricted: bool) -> Callable:
             fock_ao = hcore + vhf
             energy = mf.energy_tot(dm=dm, h1e=hcore, vhf=vhf)
             fock_ortho = _to_ortho(fock_ao, X)
-            return (float(energy), [fock_ortho])
+            fock_ortho = [fock_ortho]
+
+        # ---- per-iteration diagnostics ----
+        # Density-matrix change (Frobenius norm)
+        if _prev_dm[0] is not None:
+            iter_data["dm_change"] = float(np.linalg.norm(dm - _prev_dm[0]))
+        else:
+            iter_data["dm_change"] = None
+        _prev_dm[0] = dm.copy()
+
+        # HOMO–LUMO gap from Fock eigenvalues in the orthonormal basis
+        if unrestricted:
+            for spin, key in enumerate(["gap_up", "gap_down"]):
+                eigvals = np.linalg.eigvalsh(fock_ortho[spin])
+                nocc = int(np.sum(occupations[spin] > 0))
+                if 0 < nocc < len(eigvals):
+                    iter_data[key] = float(eigvals[nocc] - eigvals[nocc - 1])
+                else:
+                    iter_data[key] = None
+        else:
+            eigvals = np.linalg.eigvalsh(fock_ortho[0])
+            nocc = int(np.sum(occupations[0] > 0))
+            if 0 < nocc < len(eigvals):
+                gap = float(eigvals[nocc] - eigvals[nocc - 1])
+            else:
+                gap = None
+            iter_data["gap_up"] = gap
+            iter_data["gap_down"] = gap
+
+        return (float(energy), fock_ortho)
 
     return _builder
 
@@ -174,7 +208,8 @@ def run_ooo_scf(
         block_desc = ["spatial"]
 
     # 4. Build the Fock builder closure
-    fb = _make_fock_builder(mf, X, is_unrestricted)
+    iter_data: dict[str, float | None] = {}
+    fb = _make_fock_builder(mf, X, is_unrestricted, iter_data)
 
     # 5. Create the C++ solver
     solver = SCFSolver(nblocks_per_type, max_occ, nparticles, fb, block_desc)
@@ -192,6 +227,9 @@ def run_ooo_scf(
         state.e_tot_per_cycle.append(data.get("E", float("nan")))
         state.gradient_norm_per_cycle.append(data.get("diis_error", None))
         state.nfock = int(data.get("nfock", state.nfock))
+        state.dm_change_per_cycle.append(iter_data.get("dm_change"))
+        state.homo_lumo_gap_up_per_cycle.append(iter_data.get("gap_up"))
+        state.homo_lumo_gap_down_per_cycle.append(iter_data.get("gap_down"))
 
     solver.set_callback(_callback)
 
@@ -240,8 +278,6 @@ def run_ooo_scf(
     mf.e_tot = energy
     mf.converged = True
 
-    _fill_gap(state, mf, is_unrestricted)
-
     state.wall_time = time.perf_counter() - t0
     return energy, state
 
@@ -251,34 +287,3 @@ def _is_unrestricted(mf: Any) -> bool:
     from pyscf import scf
 
     return isinstance(mf, (scf.uhf.UHF,))
-
-
-def _fill_gap(state: SCFState, mf: Any, unrestricted: bool) -> None:
-    """Fill HOMO-LUMO gap info in *state* from the final MO energies/occupations."""
-    try:
-        if unrestricted:
-            for spin, attr in enumerate(
-                ["homo_lumo_gap_up_per_cycle", "homo_lumo_gap_down_per_cycle"]
-            ):
-                mo_e = np.asarray(mf.mo_energy[spin])
-                mo_o = np.asarray(mf.mo_occ[spin])
-                occ = mo_e[mo_o > 0]
-                vir = mo_e[mo_o == 0]
-                if len(occ) > 0 and len(vir) > 0:
-                    getattr(state, attr).append(float(np.min(vir) - np.max(occ)))
-                else:
-                    getattr(state, attr).append(None)
-        else:
-            mo_e = np.asarray(mf.mo_energy)
-            mo_o = np.asarray(mf.mo_occ)
-            occ = mo_e[mo_o > 0]
-            vir = mo_e[mo_o == 0]
-            if len(occ) > 0 and len(vir) > 0:
-                gap = float(np.min(vir) - np.max(occ))
-            else:
-                gap = None
-            state.homo_lumo_gap_up_per_cycle.append(gap)
-            state.homo_lumo_gap_down_per_cycle.append(gap)
-    except Exception:
-        state.homo_lumo_gap_up_per_cycle.append(None)
-        state.homo_lumo_gap_down_per_cycle.append(None)

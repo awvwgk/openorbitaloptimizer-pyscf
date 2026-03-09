@@ -16,7 +16,17 @@ from openorbitaloptimizer import run_ooo_scf
 from ._molecules import get_mole
 
 CLOSED_SHELL_TESTS = ["PCl3,sto-3g"]
-OPEN_SHELL_TESTS = ["ClO2,sto-3g", "C2H,sto-3g", "(H2O)2+,sto-3g"]
+OPEN_SHELL_TESTS = [
+    "ClO2,sto-3g",
+    "C2H,sto-3g",
+    "(H2O)2+,sto-3g",
+    "N2+,sto-3g",
+    "N2+,cc-pvdz",
+    "FO,sto-3g",
+    "FO,def2-svp",
+    "N,sto-3g",
+    "N,def2-svp",
+]
 
 
 class TestRHF:

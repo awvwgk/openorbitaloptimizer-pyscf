@@ -2,16 +2,20 @@ name: ooo-python
 channels:
   - conda-forge
 dependencies:
-  - python
-  - armadillo
-  - cmake >=3.17
-  - ninja
-  - cxx-compiler
-  - nanobind>=2.0
+  # runtime dependencies
   - numpy
   - pyscf >=2.4
+  - python
+  - scipy
+  # build dependencies
+  - armadillo
+  - cxx-compiler
+  - cmake >=3.17
+  - nanobind>=2.0
+  - ninja
+  - pip
+  - scikit-build-core>=0.9
+  # Test dependencies
   - pytest
   - pytest-cov
-  - pip
-  - scipy
-  - scikit-build-core>=0.9
+  - skala

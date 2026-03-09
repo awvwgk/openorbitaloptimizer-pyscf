@@ -24,23 +24,40 @@ from pyscf import gto, scf
 
 from openorbitaloptimizer.pyscf import run_ooo_scf
 from ._molecules import get_mole
-from ._retry import retry_scf
+from skala.pyscf.retry import retry_scf
 
 
 BENCHMARK_TESTS = [
-    "H2O,sto-3g",
     "H2O,6-31g*",
+    "H2O,def2-tzvp",
+    "H2O,aug-pc-2",
     "N2,cc-pvdz",
+    "N2,def2-tzvp",
     "C2H4,6-31g",
+    "C2H4,def2-tzvp",
     "PCl3,sto-3g",
     "Fe(CO)5,sto-3g",
-    "ClO2,sto-3g",
-    "C2H,sto-3g",
+    "ClO2,def2-tzvp",
+    "C2H,def2-tzvpd",
     "C5H3INO2P,sto-3g",
     "C3H9Pb,def2-svp",
-    "H3+,sto-3g",
-    "(H2O)2+,sto-3g",
+    "H3+,aug-pc-2",
+    "(H2O)2+,def2-tzvp",
     "C7H6IP,sto-3g",
+    "F2H,def2-svp",
+    "F2H,def2-tzvp",
+    "CHO,cc-pvdz",
+    "CHO,def2-tzvpd",
+    "CH3Li3,def2-svp",
+    "CH3Li3,def2-tzvp",
+    "Li2,cc-pvdz",
+    "Li2,def2-tzvp",
+    "N2+,cc-pvdz",
+    "N2+,def2-tzvp",
+    "FO,def2-svp",
+    "FO,aug-pc-2",
+    "N,def2-svp",
+    "N,def2-tzvpd",
 ]
 
 
@@ -192,6 +209,77 @@ def test_benchmark(name):
                 f"\n  ** OOO found a LOWER minimum by "
                 f"{res_pyscf.energy - res_ooo.energy:.6f} Eh **"
             )
+
+
+INIT_GUESS_OPTIONS = ["minao", "1e", "atom", "huckel", "mod_huckel", "sap"]
+
+
+@pytest.mark.parametrize("init_guess", INIT_GUESS_OPTIONS)
+def test_pcl3_init_guess(init_guess):
+    """Compare OOO vs PySCF on PCl3/sto-3g with different initial guesses.
+
+    The default (minao) initial guess leads to 144 OOO iterations;
+    better starting points like mod_huckel or sap converge much faster.
+    """
+    mol = get_mole("PCl3", basis="sto-3g")
+
+    # --- PySCF default solver ---
+    mf_pyscf = scf.RHF(mol)
+    mf_pyscf.verbose = 0
+    mf_pyscf.max_cycle = 200
+    mf_pyscf.init_guess = init_guess
+    nfock_pyscf = [0]
+
+    def _cb(envs):
+        nfock_pyscf[0] += 1
+
+    mf_pyscf.callback = _cb
+    t0 = time.perf_counter()
+    mf_pyscf.kernel()
+    wall_pyscf = time.perf_counter() - t0
+
+    # --- OOO solver ---
+    mf_ooo = scf.RHF(mol)
+    mf_ooo.verbose = 0
+    mf_ooo.max_cycle = 200
+    mf_ooo.init_guess = init_guess
+    t0 = time.perf_counter()
+    energy_ooo, state_ooo = run_ooo_scf(mf_ooo)
+    wall_ooo = time.perf_counter() - t0
+
+    n_iter_ooo = len(state_ooo.e_tot_per_cycle)
+    nfock_ooo = state_ooo.nfock
+
+    # Print comparison table
+    print(f"\n{'=' * 80}")
+    print(f"  PCl3/sto-3g  init_guess={init_guess}")
+    print(f"{'=' * 80}")
+    fmt = "{:<16s} {:>12s} {:>16s} {:>8s} {:>10s} {:>12s}"
+    print(
+        fmt.format(
+            "Solver", "Converged", "Energy / Eh", "Iters", "Fock evals", "Wall / s"
+        )
+    )
+    print("-" * 80)
+    print(
+        f"{'PySCF':<16s} {'yes' if mf_pyscf.converged else 'NO':>12s} "
+        f"{mf_pyscf.e_tot:>16.10f} {nfock_pyscf[0]:>8d} {nfock_pyscf[0]:>10d} "
+        f"{wall_pyscf:>12.3f}"
+    )
+    print(
+        f"{'OOO':<16s} {'yes' if np.isfinite(energy_ooo) else 'NO':>12s} "
+        f"{energy_ooo:>16.10f} {n_iter_ooo:>8d} {nfock_ooo:>10d} "
+        f"{wall_ooo:>12.3f}"
+    )
+
+    assert np.isfinite(energy_ooo), f"OOO did not converge with init_guess={init_guess}"
+
+    # With a good initial guess OOO should need far fewer than 144 iterations
+    if init_guess in ("mod_huckel", "sap"):
+        assert n_iter_ooo < 144, (
+            f"OOO with init_guess={init_guess} took {n_iter_ooo} iterations, "
+            f"expected < 144"
+        )
 
 
 if __name__ == "__main__":
