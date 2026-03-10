@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from pyscf import dft, scf
 
-from openorbitaloptimizer import run_ooo_scf
+from openorbitaloptimizer.pyscf import open_orbital_optimizer
 
 from ._molecules import get_mole
 
@@ -38,23 +38,29 @@ class TestRHF:
 
     @pytest.mark.parametrize("name", CLOSED_SHELL_TESTS)
     def test_energy(self, name):
-        """OOO energy matches PySCF RHF."""
+        """OpenOrbitalOptimizer energy matches PySCF RHF."""
         mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
         mf_ref = scf.RHF(mol)
         mf_ref.kernel()
-        assert mf_ref.converged
+        assert mf_ref.converged, f"PySCF did not converge on {name}"
 
         mf_ooo = scf.RHF(mol)
-        energy_ooo, state = run_ooo_scf(mf_ooo)
+        mf_ooo = open_orbital_optimizer(mf_ooo)
+        mf_ooo.kernel()
 
-        np.testing.assert_allclose(energy_ooo, mf_ref.e_tot, atol=1e-7)
+        assert mf_ooo.converged, f"OpenOrbitalOptimizer did not converge on {name}"
+        assert np.isfinite(mf_ooo.e_tot), (
+            f"OpenOrbitalOptimizer returned non-finite energy on {name}"
+        )
+        np.testing.assert_allclose(mf_ooo.e_tot, mf_ref.e_tot, atol=1e-7)
 
     @pytest.mark.parametrize("name", CLOSED_SHELL_TESTS[:1])
     def test_mo_coeff_orthonormal(self, name):
-        """After OOO solve, C^T S C should be identity."""
+        """After OpenOrbitalOptimizer solve, C^T S C should be identity."""
         mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
         mf = scf.RHF(mol)
-        run_ooo_scf(mf)
+        mf = open_orbital_optimizer(mf)
+        mf.kernel()
 
         S = mf.get_ovlp()
         C = mf.mo_coeff
@@ -67,35 +73,45 @@ class TestUHF:
 
     @pytest.mark.parametrize("name", OPEN_SHELL_TESTS)
     def test_energy(self, name: str) -> None:
-        """OOO UHF energy matches PySCF UHF."""
+        """OpenOrbitalOptimizer UHF energy matches PySCF UHF."""
         mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
         mf_ref = scf.UHF(mol)
         mf_ref.kernel()
-        assert mf_ref.converged
+        assert mf_ref.converged, f"PySCF did not converge on {name}"
 
         mf_ooo = scf.UHF(mol)
-        energy_ooo, state = run_ooo_scf(mf_ooo)
+        mf_ooo = open_orbital_optimizer(mf_ooo)
+        mf_ooo.kernel()
 
-        np.testing.assert_allclose(energy_ooo, mf_ref.e_tot, atol=1e-6)
+        assert mf_ooo.converged, f"OpenOrbitalOptimizer did not converge on {name}"
+        assert np.isfinite(mf_ooo.e_tot), (
+            f"OpenOrbitalOptimizer returned non-finite energy on {name}"
+        )
+        np.testing.assert_allclose(mf_ooo.e_tot, mf_ref.e_tot, atol=1e-6)
 
 
 class TestRKS:
-    """Restricted Kohn-Sham DFT via OOO vs. PySCF."""
+    """Restricted Kohn-Sham DFT via OpenOrbitalOptimizer vs. PySCF."""
 
     @pytest.mark.parametrize("name", CLOSED_SHELL_TESTS)
     def test_energy(self, name):
-        """OOO RKS energy matches PySCF RKS."""
+        """OpenOrbitalOptimizer RKS energy matches PySCF RKS."""
         mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
         mf_ref = dft.RKS(mol, xc="pbe")
         mf_ref.grids.level = 1
         mf_ref.kernel()
-        assert mf_ref.converged
+        assert mf_ref.converged, f"PySCF did not converge on {name}"
 
         mf_ooo = dft.RKS(mol, xc="pbe")
         mf_ooo.grids.level = 1
-        energy_ooo, state = run_ooo_scf(mf_ooo)
+        mf_ooo = open_orbital_optimizer(mf_ooo)
+        mf_ooo.kernel()
 
-        np.testing.assert_allclose(energy_ooo, mf_ref.e_tot, atol=1e-7)
+        assert mf_ooo.converged, f"OpenOrbitalOptimizer did not converge on {name}"
+        assert np.isfinite(mf_ooo.e_tot), (
+            f"OpenOrbitalOptimizer returned non-finite energy on {name}"
+        )
+        np.testing.assert_allclose(mf_ooo.e_tot, mf_ref.e_tot, atol=1e-7)
 
 
 class TestUKS:
@@ -103,18 +119,23 @@ class TestUKS:
 
     @pytest.mark.parametrize("name", OPEN_SHELL_TESTS)
     def test_energy(self, name):
-        """OOO UKS energy matches PySCF UKS."""
+        """OpenOrbitalOptimizer UKS energy matches PySCF UKS."""
         mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
         mf_ref = dft.UKS(mol, xc="pbe")
         mf_ref.grids.level = 1
         mf_ref.kernel()
-        assert mf_ref.converged
+        assert mf_ref.converged, f"PySCF did not converge on {name}"
 
         mf_ooo = dft.UKS(mol, xc="pbe")
         mf_ooo.grids.level = 1
-        energy_ooo, state = run_ooo_scf(mf_ooo)
+        mf_ooo = open_orbital_optimizer(mf_ooo)
+        mf_ooo.kernel()
 
-        np.testing.assert_allclose(energy_ooo, mf_ref.e_tot, atol=1e-6)
+        assert mf_ooo.converged, f"OpenOrbitalOptimizer did not converge on {name}"
+        assert np.isfinite(mf_ooo.e_tot), (
+            f"OpenOrbitalOptimizer returned non-finite energy on {name}"
+        )
+        np.testing.assert_allclose(mf_ooo.e_tot, mf_ref.e_tot, atol=1e-6)
 
 
 class TestSCFState:
@@ -124,7 +145,9 @@ class TestSCFState:
     def test_state_populated(self, name):
         mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
         mf = scf.RHF(mol)
-        _, state = run_ooo_scf(mf)
+        mf = open_orbital_optimizer(mf)
+        mf.kernel()
+        state = mf.open_orbital_optimizer_state
 
         assert state.ntries == 1
         assert len(state.e_tot_per_cycle) >= 2
@@ -136,7 +159,9 @@ class TestSCFState:
         """HOMO-LUMO gap is recorded for every SCF cycle (restricted)."""
         mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
         mf = scf.RHF(mol)
-        _, state = run_ooo_scf(mf)
+        mf = open_orbital_optimizer(mf)
+        mf.kernel()
+        state = mf.open_orbital_optimizer_state
 
         ncycles = len(state.cycles)
         assert ncycles >= 2
@@ -158,7 +183,9 @@ class TestSCFState:
         """HOMO-LUMO gap is recorded for every SCF cycle (unrestricted)."""
         mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
         mf = scf.UHF(mol)
-        _, state = run_ooo_scf(mf)
+        mf = open_orbital_optimizer(mf)
+        mf.kernel()
+        state = mf.open_orbital_optimizer_state
 
         ncycles = len(state.cycles)
         assert ncycles >= 2
@@ -177,7 +204,9 @@ class TestSCFState:
         """Density-matrix change is recorded for every SCF cycle."""
         mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
         mf = scf.RHF(mol)
-        _, state = run_ooo_scf(mf)
+        mf = open_orbital_optimizer(mf)
+        mf.kernel()
+        state = mf.open_orbital_optimizer_state
 
         ncycles = len(state.cycles)
         assert ncycles >= 2

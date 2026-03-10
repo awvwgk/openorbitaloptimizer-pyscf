@@ -10,9 +10,9 @@ from openorbitaloptimizer._core import SCFSolver
 __all__ = ["SCFSolver"]
 
 try:
-    from openorbitaloptimizer.pyscf import run_ooo_scf  # noqa: F401
+    from openorbitaloptimizer.pyscf import open_orbital_optimizer  # noqa: F401
 
-    __all__.append("run_ooo_scf")
+    __all__.extend(["open_orbital_optimizer"])
 except ImportError:
-    # PySCF not installed — skip the driver
+    # PySCF not installed: skip the driver
     pass

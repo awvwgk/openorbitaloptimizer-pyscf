@@ -28,14 +28,15 @@ You can use the OpenOrbitalOptimizer for PySCF in your Python scripts as follows
 
 ```python
 from pyscf import gto, scf
-from openorbitaloptimizer.pyscf import run_ooo_scf
+from openorbitaloptimizer.pyscf import open_orbital_optimizer
 
 mol = gto.M(
     atom='H 0 0 0; H 0 0 1',
     basis='sto-3g',
 )
 mf = scf.RHF(mol)
-energy, _ = run_ooo_scf(mf)
+mf = open_orbital_optimizer(mf)
+energy = mf.kernel()
 
 print(f"Optimized energy: {energy}")
 ```

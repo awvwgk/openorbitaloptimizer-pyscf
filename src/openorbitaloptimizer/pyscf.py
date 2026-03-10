@@ -14,13 +14,17 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, TypeVar
 
 import numpy as np
 import scipy.linalg
 from numpy.typing import NDArray
+from pyscf import lib
 
 from openorbitaloptimizer._core import SCFSolver
+
+
+_SCF = TypeVar("_SCF")
 
 
 class MolClass(Protocol):
@@ -37,6 +41,7 @@ class SCFClass(Protocol):
     mol: MolClass
     conv_tol: float
     max_cycle: int
+    diis_space: int
     verbose: int
 
     def build(self) -> None: ...
@@ -91,10 +96,78 @@ class SCFState:
     nfock: int = 0
 
 
+@dataclass(frozen=True, eq=True)
+class SCFConfig:
+    """Configuration options for the SCF solver."""
+
+    maximum_iterations: int = 128
+    """Maximum number of iterations"""
+
+    diis_epsilon: float = 1e-1
+    """Start to mix in DIIS at this error threshold (Garza and Scuseria, 2012)"""
+    diis_threshold: float = 1e-4
+    """Threshold for pure DIIS (Garza and Scuseria, 2012)"""
+    diis_diagonal_damping: float = 0.02
+    """Damping factor for DIIS diagonal (Hamilton and Pulay, 1986)"""
+    diis_restart_factor: float = 1e-4
+    """DIIS restart criterion (Chupin et al, 2021)"""
+
+    optimal_damping_threshold: float = 1.0
+    """Criterion for max error for which to use optimal damping"""
+
+    convergence_threshold: float = 1.0e-7
+    """Convergence threshold"""
+    maximum_history_length: int = 10
+    """History length"""
+    error_norm: str = "rms"
+    """Norm to use by default: root-mean-square error"""
+
+    def set_solver(self, solver: SCFSolver) -> None:
+        """Apply the configuration to the given solver."""
+        solver.convergence_threshold = self.convergence_threshold
+        solver.maximum_iterations = self.maximum_iterations
+        solver.maximum_history_length = self.maximum_history_length
+        solver.diis_threshold = self.diis_threshold
+        solver.diis_diagonal_damping = self.diis_diagonal_damping
+        solver.diis_restart_factor = self.diis_restart_factor
+        solver.optimal_damping_threshold = self.optimal_damping_threshold
+        solver.error_norm = self.error_norm
+
+    @classmethod
+    def from_mf(cls, mf: SCFClass) -> SCFConfig:
+        """Create a configuration from a PySCF mean-field object."""
+        return cls(
+            convergence_threshold=mf.conv_tol,
+            maximum_iterations=mf.max_cycle,
+            maximum_history_length=mf.diis_space,
+            verbosity=mf.verbose,
+        )
+
+    @classmethod
+    def from_solver(cls, solver: SCFSolver) -> SCFConfig:
+        """Create a configuration from an SCFSolver."""
+        return cls(
+            convergence_threshold=solver.convergence_threshold,
+            maximum_iterations=solver.maximum_iterations,
+            maximum_history_length=solver.maximum_history_length,
+            diis_threshold=solver.diis_threshold,
+            diis_diagonal_damping=solver.diis_diagonal_damping,
+            diis_restart_factor=solver.diis_restart_factor,
+            optimal_damping_threshold=solver.optimal_damping_threshold,
+            density_restart_factor=solver.density_restart_factor,
+            convergence_threshold_orbital_gradient=solver.convergence_threshold_orbital_gradient,
+            error_norm=solver.error_norm,
+            minimal_gradient_projection=solver.minimal_gradient_projection,
+            occupied_threshold=solver.occupied_threshold,
+            initial_level_shift=solver.initial_level_shift,
+            level_shift_factor=solver.level_shift_factor,
+        )
+
+
 def _make_fock_builder(
     mf: Any, X: NDArray, unrestricted: bool, iter_data: dict[str, float | None]
 ) -> Callable:
-    """Return a Python callable matching the OOO FockBuilder signature.
+    """Return a Python callable matching the OpenOrbitalOptimizer FockBuilder signature.
 
     The closure captures *mf* and *X* and converts between orthonormal
     and AO representations on every call.  It also populates *iter_data*
@@ -161,8 +234,10 @@ def _make_fock_builder(
     return _builder
 
 
-def run_ooo_scf(
+def run_open_orbital_optimizer(
     mf: SCFClass,
+    dm0: NDArray | list[NDArray] | None = None,
+    config: SCFConfig | None = None,
 ) -> tuple[float, SCFState]:
     """Run a PySCF SCF calculation using the OpenOrbitalOptimizer back-end.
 
@@ -174,6 +249,12 @@ def run_ooo_scf(
         should work) but need *not* have run ``mf.kernel()`` yet.
         The object is modified in-place with the converged solution
         (``mo_coeff``, ``mo_energy``, ``mo_occ``, ``e_tot``, ``converged``).
+    dm0 : NDArray or list[NDArray], optional
+        Initial guess density matrix in the AO basis.  If not provided, the
+        driver uses PySCF's default initial guess (``mf.get_init_guess()``).
+    config : SCFConfig, optional
+        Configuration options for the SCF solver.  If not provided, defaults are
+        used.
 
     Returns
     -------
@@ -185,6 +266,8 @@ def run_ooo_scf(
     # 1. Ensure PySCF object is built
     if mf.mol.nao == 0:
         mf.build()
+    if config is None:
+        config = SCFConfig()
 
     is_unrestricted = _is_unrestricted(mf)
 
@@ -213,8 +296,7 @@ def run_ooo_scf(
 
     # 5. Create the C++ solver
     solver = SCFSolver(nblocks_per_type, max_occ, nparticles, fb, block_desc)
-    solver.convergence_threshold = mf.conv_tol
-    solver.maximum_iterations = mf.max_cycle
+    config.set_solver(solver)
     solver.verbosity = mf.verbose
 
     # 6. Logging state
@@ -234,7 +316,8 @@ def run_ooo_scf(
     solver.set_callback(_callback)
 
     # 7. Initial guess (Fock from PySCF's init guess density)
-    dm0 = mf.get_init_guess(key=mf.init_guess)
+    if dm0 is None:
+        dm0 = mf.get_init_guess(key=mf.init_guess)
     hcore = mf.get_hcore()
     vhf0 = mf.get_veff(dm=dm0)
     if is_unrestricted:
@@ -250,6 +333,7 @@ def run_ooo_scf(
     solver.run()
 
     # 9. Retrieve solution and map back to AO
+    converged = solver.is_converged()
     energy = solver.get_energy()
     orbitals_ortho = solver.get_orbitals()
     occupations = solver.get_orbital_occupations()
@@ -275,8 +359,8 @@ def run_ooo_scf(
         mf.mo_coeff = mo_coeff
         mf.mo_occ = mo_occ
 
+    mf.converged = converged
     mf.e_tot = energy
-    mf.converged = True
 
     state.wall_time = time.perf_counter() - t0
     return energy, state
@@ -287,3 +371,125 @@ def _is_unrestricted(mf: Any) -> bool:
     from pyscf import scf
 
     return isinstance(mf, (scf.uhf.UHF,))
+
+
+class _OpenOrbitalOptimizer:
+    """Mixin class that replaces PySCF's SCF solver with OpenOrbitalOptimizer.
+
+    This follows the standard PySCF addon pattern (like ``newton()``,
+    ``density_fit()``, ``smearing()``, ...).  A dynamic class inheriting from
+    both ``_OpenOrbitalOptimizer`` and the original mean-field class is created by :func:`open_orbital_optimizer`,
+    so that all PySCF methods not overridden here fall through unchanged.
+    """
+
+    __name_mixin__ = "OpenOrbitalOptimizer"
+
+    _keys = frozenset({"open_orbital_optimizer_config", "open_orbital_optimizer_state"})
+
+    def __init__(self, mf: Any, config: SCFConfig | dict | None = None):
+        self.__dict__.update(mf.__dict__)
+        self._scf = mf
+        if isinstance(config, dict):
+            config = SCFConfig(**config)
+        self.open_orbital_optimizer_config = config or SCFConfig()
+        self.open_orbital_optimizer_state: SCFState | None = None
+
+    def undo_open_orbital_optimizer(self):
+        """Remove the OpenOrbitalOptimizer mixin and restore the original SCF class."""
+
+        obj = lib.view(self, lib.drop_class(self.__class__, _OpenOrbitalOptimizer))
+        del (
+            obj.open_orbital_optimizer_config,
+            obj.open_orbital_optimizer_state,
+            obj._scf,
+        )
+        return obj
+
+    def kernel(self, h1e=None, s1e=None, dm0=None, **kwargs):
+        """Run the SCF using OpenOrbitalOptimizer.
+
+        The signature mirrors ``pyscf.scf.hf.SCF.kernel`` so that this
+        object is a true drop-in replacement.  *h1e* and *s1e* are
+        accepted for compatibility but currently ignored (the driver
+        always obtains them from the mean-field object).
+
+        Parameters
+        ----------
+        h1e, s1e : ignored
+            Accepted for API compatibility with PySCF's ``kernel``.
+        dm0 : NDArray or list[NDArray], optional
+            Initial guess density matrix in the AO basis.
+        **kwargs
+            Silently absorbed for forward-compatibility.
+
+        Returns
+        -------
+        float
+            The converged total energy.
+        """
+        if kwargs:
+            import warnings
+
+            warnings.warn(
+                f"open_orbital_optimizer.kernel() got unexpected keyword arguments: {kwargs}",
+                stacklevel=2,
+            )
+
+        self.build(self.mol)
+        self.dump_flags()
+
+        _, state = run_open_orbital_optimizer(
+            self, dm0=dm0, config=self.open_orbital_optimizer_config
+        )
+        self.open_orbital_optimizer_state = state
+
+        # PySCF convention: call _finalize (logs energy, etc.)
+        self._finalize()
+
+        return self.e_tot
+
+
+def open_orbital_optimizer(mf: _SCF, config: SCFConfig | dict | None = None) -> _SCF:
+    """Apply OpenOrbitalOptimizer as the SCF solver for a PySCF mean-field object.
+
+    Returns a new SCF object whose ``kernel()`` method uses
+    OpenOrbitalOptimizer for orbital optimisation instead of PySCF's
+    built-in DIIS.  All other PySCF functionality (integrals, grids, …)
+    is untouched.
+
+    Parameters
+    ----------
+    mf : pyscf.scf.hf.SCF
+        Any PySCF mean-field object (RHF, UHF, RKS, UKS, …).
+    config : SCFConfig, dict, optional
+        Configuration for the OpenOrbitalOptimizer solver.  If a dictionary is provided,
+        it is converted to an SCFConfig object.  If ``None``, default ``SCFConfig()`` values are used.
+
+    Returns
+    -------
+    mf : SCF object
+        A copy of *mf* with ``kernel()`` overridden to use OpenOrbitalOptimizer.
+        The original object is **not** modified.
+
+    Examples
+    --------
+    >>> from pyscf import gto, scf
+    >>> from openorbitaloptimizer.pyscf import open_orbital_optimizer
+    >>> mol = gto.M(atom="H 0 0 0; H 0 0 0.74", basis="sto-3g", verbose=0)
+    >>> mf = open_orbital_optimizer(scf.RHF(mol))
+    >>> mf.kernel()
+    -1.1174...
+    """
+
+    if isinstance(mf, _OpenOrbitalOptimizer):
+        # Already wrapped — just update the config if requested.
+        if config is not None:
+            if isinstance(config, dict):
+                config = SCFConfig(**config)
+            mf.open_orbital_optimizer_config = config
+        return mf
+
+    open_orbital_optimizer_mf = _OpenOrbitalOptimizer(mf, config)
+    return lib.set_class(
+        open_orbital_optimizer_mf, (_OpenOrbitalOptimizer, mf.__class__)
+    )

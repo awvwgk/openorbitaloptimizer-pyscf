@@ -190,6 +190,10 @@ public:
         solver_->run();
     }
 
+    bool is_converged() const {
+        return solver_->converged();
+    }
+
     double get_energy() const {
         return solver_->get_energy();
     }
@@ -229,6 +233,15 @@ public:
 
     void set_diis_threshold(double val) { solver_->diis_threshold(val); }
     double get_diis_threshold() const { return solver_->diis_threshold(); }
+
+    void set_diis_diagonal_damping(double val) { solver_->diis_diagonal_damping(val); }
+    double get_diis_diagonal_damping() const { return solver_->diis_diagonal_damping(); }
+
+    void set_diis_restart_factor(double val) { solver_->diis_restart_factor(val); }
+    double get_diis_restart_factor() const { return solver_->diis_restart_factor(); }
+
+    void set_optimal_damping_threshold(double val) { solver_->optimal_damping_threshold(val); }
+    double get_optimal_damping_threshold() const { return solver_->optimal_damping_threshold(); }
 
     void set_maximum_history_length(int val) { solver_->maximum_history_length(val); }
     int get_maximum_history_length() const { return solver_->maximum_history_length(); }
@@ -320,6 +333,8 @@ NB_MODULE(_core, m) {
          "Initialize solver with given orbitals and occupations.")
     .def("run", &SCFSolverWrapper::run,
          "Run the SCF solver to convergence.")
+    .def("is_converged", &SCFSolverWrapper::is_converged,
+         "Check if the solver has converged.")
     .def("get_energy", &SCFSolverWrapper::get_energy,
          "Get the converged total energy.")
     .def("get_solution", &SCFSolverWrapper::get_solution,
@@ -350,6 +365,18 @@ NB_MODULE(_core, m) {
          &SCFSolverWrapper::get_diis_threshold,
          &SCFSolverWrapper::set_diis_threshold,
          "Error threshold for pure DIIS.")
+    .def_prop_rw("diis_diagonal_damping",
+         &SCFSolverWrapper::get_diis_diagonal_damping,
+         &SCFSolverWrapper::set_diis_diagonal_damping,
+         "Diagonal damping for DIIS.")
+    .def_prop_rw("diis_restart_factor",
+         &SCFSolverWrapper::get_diis_restart_factor,
+         &SCFSolverWrapper::set_diis_restart_factor,
+         "Restart factor for DIIS.")
+    .def_prop_rw("optimal_damping_threshold",
+         &SCFSolverWrapper::get_optimal_damping_threshold,
+         &SCFSolverWrapper::set_optimal_damping_threshold,
+         "Error threshold to switch to optimal damping.")
     .def_prop_rw("maximum_history_length",
          &SCFSolverWrapper::get_maximum_history_length,
          &SCFSolverWrapper::set_maximum_history_length,
