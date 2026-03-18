@@ -67,6 +67,19 @@ class TestRHF:
         CtSC = C.T @ S @ C
         np.testing.assert_allclose(CtSC, np.eye(CtSC.shape[0]), atol=1e-10)
 
+    @pytest.mark.parametrize("name", CLOSED_SHELL_TESTS[:1])
+    def test_energy_summary(self, name):
+        """Print energy summary for a simple closed-shell system."""
+        mol = get_mole(name.split(",")[0], basis=name.split(",")[1])
+        mf_ooo = scf.RHF(mol)
+        mf_ooo = open_orbital_optimizer(mf_ooo)
+        mf_ooo.kernel()
+
+        assert mf_ooo.converged, f"OpenOrbitalOptimizer did not converge on {name}"
+        assert sum(mf_ooo.scf_summary.values()) == pytest.approx(mf_ooo.e_tot), (
+            f"SCF summary values do not sum to total energy on {name}"
+        )
+
 
 class TestUHF:
     """Unrestricted Hartree-Fock on simple open-shell systems."""

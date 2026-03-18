@@ -360,7 +360,7 @@ def run_open_orbital_optimizer(
         mf.mo_occ = mo_occ
 
     mf.converged = converged
-    mf.e_tot = energy
+    mf.e_tot = mf.energy_tot()
 
     state.wall_time = time.perf_counter() - t0
     return energy, state
